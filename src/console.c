@@ -61,3 +61,21 @@ void console_putchar(char c) {
 void console_write(const char *s) {
     for (; *s; s++) console_putchar(*s);
 }
+
+void console_draw_text(uint64_t px, uint64_t py, uint32_t scale,
+                       uint32_t fg, const char *s) {
+    uint64_t x = px;
+    for (; *s; s++) {
+        if (*s == '\n') { py += FONT_HEIGHT * scale; x = px; continue; }
+        const uint8_t *glyph = font_glyph(*s);
+        for (uint32_t row = 0; row < FONT_HEIGHT; row++) {
+            for (uint32_t col = 0; col < FONT_WIDTH; col++) {
+                if (glyph[row] & (1 << col)) {
+                    fb_fill_rect(x + col * scale, py + row * scale,
+                                 scale, scale, fg);
+                }
+            }
+        }
+        x += FONT_WIDTH * scale;
+    }
+}

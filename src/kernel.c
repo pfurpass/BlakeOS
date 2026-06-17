@@ -4,6 +4,12 @@
 
 #include "framebuffer.h"
 #include "console.h"
+#include "serial.h"
+#include "idt.h"
+#include "pic.h"
+#include "keyboard.h"
+#include "mouse.h"
+#include "desktop.h"
 
 // --- Limine-Protokoll: Anfragen an den Bootloader ---------------------------
 // Diese Strukturen liest Limine aus dem Kernel-Image, bevor es uns startet.
@@ -41,41 +47,50 @@ void kmain(void) {
         hcf();
     }
 
+    // Serielle Konsole zuerst: ab jetzt können wir loggen, selbst wenn
+    // beim Framebuffer etwas schiefgeht.
+    serial_init();
+    serial_write("\n=== BlakeOS startet ===\n");
+
     // Haben wir wirklich einen Framebuffer bekommen?
     if (framebuffer_request.response == NULL
         || framebuffer_request.response->framebuffer_count < 1) {
+        serial_write("FEHLER: kein Framebuffer vom Bootloader.\n");
         hcf();
     }
 
     struct limine_framebuffer *lfb =
         framebuffer_request.response->framebuffers[0];
 
+    // Debug-Infos über die serielle Leitung ausgeben.
+    serial_write("Framebuffer-Adresse: ");
+    serial_write_hex((uint64_t)lfb->address);
+    serial_write("\nBreite:  ");
+    serial_write_hex(lfb->width);
+    serial_write("\nHoehe:   ");
+    serial_write_hex(lfb->height);
+    serial_write("\nPitch:   ");
+    serial_write_hex(lfb->pitch);
+    serial_putchar('\n');
+
     // Unseren eigenen, vom Limine-Protokoll entkoppelten Framebuffer aufsetzen.
     fb_init(lfb->address, lfb->width, lfb->height, lfb->pitch);
 
-    // Hintergrund: dunkles Blaugrau.
-    uint32_t bg = rgb(0x14, 0x18, 0x24);
-    fb_clear(bg);
+    // --- Interrupts, Tastatur und Maus einrichten ---
+    pic_remap(0x20, 0x28);   // IRQ0–15 -> Vektor 32–47
+    idt_init();              // Interrupt-Tabelle laden
+    keyboard_init();         // Tastatur-Handler auf IRQ1
+    mouse_init();            // Maus-Handler auf IRQ12
+    __asm__ volatile ("sti"); // Interrupts scharfschalten
 
-    // Ein kleiner Farbbalken oben, damit man sieht: Grafik funktioniert.
-    uint32_t bar_h = lfb->height / 40;
-    fb_fill_rect(0, 0, lfb->width / 3,     bar_h, rgb(0xE0, 0x4F, 0x5F)); // rot
-    fb_fill_rect(lfb->width / 3, 0, lfb->width / 3, bar_h, rgb(0x4F, 0xC0, 0x7F)); // grün
-    fb_fill_rect(2 * lfb->width / 3, 0, lfb->width / 3, bar_h, rgb(0x4F, 0x8F, 0xE0)); // blau
+    serial_write("Desktop aktiv. Warte auf Maus/Tastatur.\n");
 
-    // Text rendern. scale=3 -> große, gut lesbare 24x24-Pixel-Glyphen.
-    console_init(rgb(0xF0, 0xF0, 0xF0), bg, 3);
-    console_set_cursor(2, 3);
-    console_write("Hello, World!\n");
-
-    console_set_color(rgb(0x8F, 0xB8, 0xFF), bg);
-    console_set_cursor(2, 5);
-    console_write("BlakeOS laeuft.\n");
-
-    console_set_color(rgb(0x9A, 0x9A, 0x9A), bg);
-    console_set_cursor(2, 7);
-    console_write("Framebuffer aktiv - bereit zum Erweitern.\n");
-
-    // Kernel ist fertig: anhalten (kein Scheduler, keine Interrupts ... noch).
-    hcf();
+    // Haupt-Schleife: Eingaben verarbeiten, Desktop zeichnen, auf den
+    // Bildschirm bringen, dann bis zum nächsten Interrupt schlafen.
+    for (;;) {
+        desktop_update();
+        desktop_render();
+        fb_present();
+        __asm__ volatile ("hlt");
+    }
 }

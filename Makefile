@@ -21,7 +21,8 @@ LDFLAGS := \
     -T linker.ld
 
 SRCS := $(wildcard src/*.c)
-OBJS := $(SRCS:.c=.o)
+ASMS := $(wildcard src/*.S)
+OBJS := $(SRCS:.c=.o) $(ASMS:.S=.o)
 
 KERNEL := blakeos.elf
 ISO    := blakeos.iso
@@ -33,6 +34,10 @@ all: $(ISO)
 
 # Jede .c-Datei zu einer .o-Datei kompilieren.
 src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Assembler-Dateien (.S) übersetzen (clang assembliert sie direkt).
+src/%.o: src/%.S
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Kernel-ELF aus allen Objektdateien linken.
@@ -62,8 +67,14 @@ $(ISO): $(KERNEL) limine.conf
 	$(LIMINE_DIR)/limine bios-install $(ISO)
 
 # Im Emulator starten (BIOS-Modus).
+# GDK_BACKEND=x11 sorgt dafür, dass die Maus auch unter Wayland funktioniert
+# (QEMU/GTK reicht relative Mausbewegung sonst oft nicht durch).
 run: $(ISO)
-	qemu-system-x86_64 -M q35 -m 256M -cdrom $(ISO) -boot d
+	GDK_BACKEND=x11 qemu-system-x86_64 -M q35 -m 256M -cdrom $(ISO) -boot d
+
+# Wie 'run', aber mit serieller Ausgabe im Terminal (zum Debuggen).
+run-debug: $(ISO)
+	GDK_BACKEND=x11 qemu-system-x86_64 -M q35 -m 256M -cdrom $(ISO) -boot d -serial stdio
 
 # Im Emulator starten (UEFI-Modus, benötigt OVMF-Firmware).
 run-uefi: $(ISO)
